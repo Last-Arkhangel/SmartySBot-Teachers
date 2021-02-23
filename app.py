@@ -12,17 +12,22 @@ import re
 import json
 import copy
 import random
-from WeatherManager import WeatherManager
-from settings import KEYBOARD
-from flask import Flask, request, render_template, jsonify
+import hashlib
 import xmltodict
+from settings import KEYBOARD
+from flask import Flask, request, render_template, jsonify, session, redirect, url_for
+from flask_sslify import SSLify
 
 app = Flask(__name__, template_folder='site', static_folder='site/static', static_url_path='/fl1/static')
+sslify = SSLify(app)
+app.secret_key = hashlib.md5(settings.ADMIN_PASSWORD.encode('utf-8')).hexdigest()
+
 bot = telebot.TeleBot(settings.BOT_TOKEN, threaded=True)
 
 keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
 keyboard.row(KEYBOARD['TODAY'], KEYBOARD['TOMORROW'], KEYBOARD['FOR_A_WEEK'])
-keyboard.row(KEYBOARD['FOR_A_TEACHER'], KEYBOARD['FOR_A_GROUP'], KEYBOARD['HELP'])
+keyboard.row(KEYBOARD['FOR_A_TEACHER'], KEYBOARD['FOR_A_GROUP'])
+keyboard.row(KEYBOARD['IN_AUDIENCE'], KEYBOARD['TIMETABLE'], KEYBOARD['HELP'])
 
 emoji_numbers = ['0⃣', '1⃣', '2⃣', '3⃣', '4⃣', '5⃣', '6⃣', '7⃣', '8⃣', '9⃣']
 
@@ -118,7 +123,7 @@ def get_timetable(faculty='', teacher='', group='', sdate='', edate='', user_id=
 
     except Exception as ex:
         core.log(m='Помилка при відправленні запиту: {}\n.'.format(str(ex)))
-        bot.send_message('204560928', f'Помилка {ex},\n\n {user_id}', reply_markup=keyboard)
+        bot.send_message(settings.ADMINS_ID, f'Помилка {ex},\n\n {user_id}', reply_markup=keyboard)
         return []
 
     return all_days_lessons
@@ -199,8 +204,8 @@ def render_day_timetable(day_data):
             end_index = i
             break
 
-    timetable = ['8:00 - 9:20', '9:30 - 10:50', '11:00 - 12:20', '13:00 - 14:20',
-                 '14:30 - 15:50 ', '16:00 - 17:20', '17:30 - 18:50', '19:00 - 20:20']
+    timetable = ['8:00 - 9:20', '9:30 - 10:50', '11:10 - 12:30',
+                 '12:40 - 14:00', '14:10 - 15:30', '-']
     for i in range(start_index, end_index + 1):
         if lessons[i]:
             day_timetable += '{} <i>{}</i> \n{}\n\n'.format(emoji_numbers[i+1], timetable[i], lessons[i])
@@ -276,7 +281,7 @@ def get_logs(message):
 
 @bot.message_handler(commands=['start'])
 def start_handler(message):
-    sent = bot.send_message(message.chat.id, 'Вітаю, {} 😊. Я постараюсь допомогти Вам із розкладом. З моєю допомогою '
+    sent = bot.send_message(message.chat.id, 'Вітаю, {} 😊. Я спробую допомогти Вам із розкладом. З моєю допомогою '
                                              'Ви зможете швидко та зручно переглядати свій розклад. Тож для початку '
                                              'роботи вкажіть своє прізвище '
                                              '(і тільки прізвище)'.format(message.chat.first_name))
@@ -351,7 +356,7 @@ def set_name(message):
         with open(os.path.join(settings.BASE_DIR, 'teachers.txt'), 'r', encoding="utf-8") as file:
             all_teachers = json.loads(file.read())
     except Exception as ex:
-        bot.send_message('204560928', 'Помилка в роботі бота. Можливо відсутній файл із викладачами.')
+        bot.send_message(settings.ADMINS_ID, 'Помилка в роботі бота. Можливо відсутній файл із викладачами.')
         bot.send_message(message.chat.id, 'Під час роботи виникла помилка. Розробник отримав сповіщення.',
                          reply_markup=keyboard)
         core.log(m='Помилка завантаження файлу із викладачами: {}'.format(str(ex)))
@@ -522,7 +527,8 @@ def show_in_audience(message):
 
         day_timetable += '.....::::: \U0001F4CB Пари для <b>{}</b> ауд. :::::.....\n\n'.format(audience_number)
 
-        timetable = ['8:00 - 9:20', '9:30 - 10:50', '11:00 - 12:20', '13:00 - 14:20', '14:30 - 15:50 ', '16:00 - 17:20', '17:30 - 18:50', '19:00 - 20:20']
+        timetable = ['8:00 - 9:20', '9:30 - 10:50', '11:10 - 12:30',
+                     '12:40 - 14:00', '14:10 - 15:30', '-']
 
         for lesson in lessons:
             n = int(lesson['lesson_number'])
@@ -535,10 +541,64 @@ def show_in_audience(message):
 
     bot.send_message(chat_id=message.chat.id, text=day_timetable, parse_mode='HTML', reply_markup=keyboard)
 
+@app.route('/fl1/login/', methods=['POST', 'GET'])
+def admin_login():
 
-@app.route('/fl1/metrics')
+    if not settings.BOT_TOKEN:
+        return 'Set bot token in settings.py'
+
+    if session.get('login'):
+        return redirect(url_for('admin_metrics'))
+
+    if request.method == 'GET':
+        return render_template('login.html')
+
+    req_ip = request.environ.get('HTTP_X_REAL_IP', request.remote_addr)
+    req_agent = request.user_agent
+
+    if request.method == 'POST' and request.form.get('password') == settings.ADMIN_PASSWORD:
+        session['login'] = True
+        msg = f'Авторизація в панелі адміністратора.\n<b>IP: </b>{req_ip}\n<b>UA: </b>{req_agent}'
+        bot.send_message(settings.ADMINS_ID, msg, parse_mode='HTML')
+        return redirect(url_for('admin_metrics'))
+
+    else:
+
+        msg = f'Неправильний пароль під час авторизації в панелі адміністратора.\n' \
+              f'<b>IP: </b>{req_ip}\n<b>UA: </b>{req_agent}'
+
+        bot.send_message(settings.ADMINS_ID, msg, parse_mode='HTML')
+
+        return 'Неправильний пароль'
+
+
+@app.route('/fl1/logout/')
+def admin_logout():
+
+    req_ip = request.environ.get('HTTP_X_REAL_IP', request.remote_addr)
+    req_agent = request.user_agent
+    
+    if session.get('login'):
+        session['login'] = False
+        msg = f'Вихід з панелі адміністратора.\n<b>IP: </b>{req_ip}\n<b>UA: </b>{req_agent}'
+        bot.send_message(settings.ADMINS_ID, msg, parse_mode='HTML')    
+    return admin_login()
+
+
+@app.route('/fl1/debug/')
+def admin_debug():
+
+    import os
+
+    return str(os.environ)
+
+
+@app.route('/fl1/metrics/')
 def admin_metrics():
 
+    if not session.get('login'):
+        return admin_login()
+    
     all_users_count = core.MetricsManager.get_all_users_count()
     users_registered_week = core.MetricsManager.get_number_of_users_registered_during_the_week()
     active_today_users_count = core.MetricsManager.get_active_today_users_count()
@@ -574,6 +634,9 @@ def admin_metrics():
 @app.route('/fl1/del_user', methods=['POST'])
 def admin_del_user():
 
+    if not session.get('login'):
+        return admin_login()
+    
     data = {}
 
     if request.method == 'POST' and request.form.get('PWD') == request.form.get('ID') + ' 3':
@@ -599,9 +662,12 @@ def admin_del_user():
     return render_template('users.html', data=data)
 
 
-@app.route('/fl1/users')
+@app.route('/fl1/users/')
 def admin_users():
 
+    if not session.get('login'):
+        return admin_login()
+    
     data = {
         'users': core.MetricsManager.get_users()
     }
@@ -609,9 +675,18 @@ def admin_users():
     return render_template('users.html', data=data)
 
 
+@app.route('/')
+def admin_redirect_to_login():
+
+    return admin_login()
+
+
 @app.route('/fl1/send_message', methods=['POST'])
 def admin_send_message():
 
+    if not session.get('login'):
+        return admin_login()
+    
     data = {}
 
     if request.method == 'POST' and request.form.get('pass') == request.form.get('id') + ' 2':
@@ -664,9 +739,48 @@ def last_days_statistics():
     return jsonify(data=stats)
 
 
+@app.route('/fl1/admin_last_requests')
+def admin_last_requests():
+
+    offset = request.args.get('offset')
+
+    last_requests = core.MetricsManager.get_last_requests(offset)
+
+    return jsonify(last_requests)
+
+
+@app.route('/fl1/last_hours_statistics')
+def last_hours_statistics():
+
+    today_hours_statistics = core.MetricsManager.get_hours_statistics()
+    yesterday_hours_statistics = core.MetricsManager.get_hours_statistics(day_delta=1)
+    two_days_ago_statistics = core.MetricsManager.get_hours_statistics(day_delta=2)
+
+    stats = {'labels': [], 'stats_data': {'today': [], 'yesterday': [], 'two_days_ago': []}}
+
+    def sort_by_date(input_str):
+        return datetime.datetime.strptime(input_str, '%Y-%m-%d %H:%M')
+
+    [stats['labels'].append('{}:00'.format(hour) ) for hour in range(24)]
+
+    for day_stat in sorted(today_hours_statistics, key=sort_by_date):
+        stats['stats_data']['today'].append(today_hours_statistics[day_stat])
+
+    for day_stat in sorted(yesterday_hours_statistics, key=sort_by_date):
+        stats['stats_data']['yesterday'].append(yesterday_hours_statistics[day_stat])
+
+    for day_stat in sorted(two_days_ago_statistics, key=sort_by_date):
+        stats['stats_data']['two_days_ago'].append(two_days_ago_statistics[day_stat])
+
+    return jsonify(data=stats)
+    
+
 @app.route('/fl1/update_groups')
 def admin_update_groups():
 
+    if not session.get('login'):
+        return admin_login()
+    
     updated = core.update_all_groups()
 
     if updated:
@@ -679,6 +793,9 @@ def admin_update_groups():
 @app.route('/fl1/update_teachers')
 def admin_update_teachers():
 
+    if not session.get('login'):
+        return admin_login()
+    
     updated = core.update_all_teachers()
 
     if updated:
@@ -691,6 +808,9 @@ def admin_update_teachers():
 @app.route('/fl1/user/<user_id>')
 def admin_user_statistics(user_id):
 
+    if not session.get('login'):
+        return admin_login()
+    
     data = {
         'user': core.User.get_userinfo_by_id(user_id),
         'actions': core.MetricsManager.get_stats_by_user_id(user_id),
@@ -706,7 +826,7 @@ def index():
     core.create_audience_db_if_not_exists()
     bot.delete_webhook()
     bot.set_webhook(settings.WEBHOOK_URL + settings.WEBHOOK_PATH, max_connections=1)
-    bot.send_message('204560928', 'Running...')
+    bot.send_message(settings.ADMINS_ID, 'Running...')
     core.log(m='Webhook is setting: {} by run url'.format(bot.get_webhook_info().url))
     return 'ok'
 
@@ -817,14 +937,13 @@ def main_menu(message):
         elif request == KEYBOARD['TIMETABLE']:
 
             t = ''
-            t += '{} - 8:00 - 09:20\n'.format(emoji_numbers[1])
+            t += '{} - 8:00 - 9:20\n'.format(emoji_numbers[1])
             t += '{} - 9:30 - 10:50\n'.format(emoji_numbers[2])
-            t += '{} - 11:00 - 12:20\n'.format(emoji_numbers[3])
-            t += '{} - 13:00 - 14:20\n'.format(emoji_numbers[4])
-            t += '{} - 14:30 - 15:50 \n'.format(emoji_numbers[5])
-            t += '{} - 16:00 - 17:20 \n'.format(emoji_numbers[6])
-            t += '{} - 17:30 - 18:50 \n'.format(emoji_numbers[7])
-            t += '{} - 19:00 - 20:20 \n'.format(emoji_numbers[8])
+            t += '{} - 11:10 - 12:30\n'.format(emoji_numbers[3])
+            t += '{} - 12:40 - 14:00\n'.format(emoji_numbers[4])
+            t += '{} - 14:10 - 15:30 \n'.format(emoji_numbers[5])
+            
+            
 
             bot.send_message(user.get_id(), t, reply_markup=keyboard)
 
@@ -844,9 +963,9 @@ def main_menu(message):
 
             msg = "Для пошуку по датам : <b>15.05</b>, <b>15.05-22.05</b>, <b>1.1.18-10.1.18</b>\n\n" \
                   "<b>Ім`я:</b> <code> {}</code>\n\n" \
-                  "<b>Канал:</b> @zdu_news\n" \
-                  "<b>Новини університету:</b> @zueduua\n" \
-                  "<b>Розробник:</b> @Koocherov\n"
+                  "<b>Канал:</b> @********\n" \
+                  "<b>Новини коледжу:</b> @*********\n" \
+                  "<b>Розробник:</b> @***_CBA_Bot\n"
 
             kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
             kb.row(KEYBOARD['MAIN_MENU'])
@@ -857,7 +976,7 @@ def main_menu(message):
 
         elif request == KEYBOARD['FOR_A_GROUP']:
             sent = bot.send_message(message.chat.id,
-                                    'Для того щоб подивитись розклад будь якої групи на тиждень введіть її назву')
+                                    'Для того щоб подивитись розклад будь якої групи на тиждень введіть її назву (Приклад: 029-18-1)')
             bot.register_next_step_handler(sent, show_other_group)
 
         elif request == KEYBOARD['IN_AUDIENCE']:
@@ -865,65 +984,65 @@ def main_menu(message):
             now_time = datetime.datetime.now().time()
 
             lessons_time = ({
-                    'start_time': (9, 0),
-                    'end_time': (10, 20)
+                    'start_time': (8, 0),
+                    'end_time': (9, 20)
                 },
                 {
-                    'start_time': (10, 30),
-                    'end_time': (11, 50)
+                    'start_time': (9, 30),
+                    'end_time': (10, 50)
                 },
                 {
-                    'start_time': (12, 10),
-                    'end_time': (13, 30)
+                    'start_time': (11, 10),
+                    'end_time': (12, 30)
                 },
                 {
-                    'start_time': (13, 40),
-                    'end_time': (15, 0)
+                    'start_time': (12, 40),
+                    'end_time': (14, 0)
                 },
                 {
-                    'start_time': (15, 20),
-                    'end_time': (16, 40)
-                },
-                {
-                    'start_time': (16, 50),
-                    'end_time': (18, 10)
-                },
-                {
-                    'start_time': (18, 20),
-                    'end_time': (19, 40)
+                    'start_time': (14, 10),
+                    'end_time': (15, 30)
                 },
             )
 
+            
+            
+            
+            
+            
+            
+            
+            
             breaks_time = ({
-                   'start_time': (8, 0),
-                   'end_time': (9, 0)
+                   'start_time': (7, 50),
+                   'end_time': (8, 0)
                },
                 {
-                   'start_time': (10, 20),
-                   'end_time': (10, 30)
+                   'start_time': (9, 20),
+                   'end_time': (9, 30)
                },
                {
-                   'start_time': (11, 50),
-                   'end_time': (12, 10)
+                   'start_time': (10, 50),
+                   'end_time': (11, 10)
                },
                {
-                   'start_time': (13, 30),
-                   'end_time': (13, 40)
+                   'start_time': (12, 30),
+                   'end_time': (12, 40)
                },
                {
-                   'start_time': (15, 00),
-                   'end_time': (15, 20)
-               },
-               {
-                   'start_time': (16, 40),
-                   'end_time': (16, 50)
-               },
-               {
-                   'start_time': (18, 10),
-                   'end_time': (18, 20)
+                   'start_time': (14, 00),
+                   'end_time': (15, 10)
                },
             )
 
+            
+            
+            
+            
+            
+            
+            
+            
             current_lesson = 0
             current_break = -1
 
@@ -1070,7 +1189,7 @@ def main_menu(message):
             bot.send_message(user.get_id(), timetable_for_days, parse_mode='HTML', reply_markup=keyboard)
 
         elif request == KEYBOARD['MAIN_MENU']:
-            bot.send_message(user.get_id(), 'Ок', reply_markup=keyboard)
+            bot.send_message(user.get_id(), 'Меню так меню', reply_markup=keyboard)
 
         else:
             answers = ['м?', 'хм.. \U0001F914', 'не розумію(', 'виберіть потрібне в меню']
@@ -1098,8 +1217,8 @@ def main():
             core.log(m='Помилка при устіновці веб хука: {}'.format(str(ex)))
 
     try:
-        core.log(m='Running..')
-        bot.polling(none_stop=True, interval=settings.POLLING_INTERVAL)
+        core.log(m='Запуск..')
+        bot.infinity_polling(interval=settings.POLLING_INTERVAL, timeout=settings.POLLING_TIMEOUT, none_stop=True)
 
     except Exception as ex:
 
@@ -1117,4 +1236,4 @@ def main():
 
 
 if __name__ == "__main__":
-    app.run(debug=True) if len(sys.argv) > 1 else main()
+    app.run(host=settings.WEBHOOK_LISTEN, port=settings.WEBHOOK_PORT, ssl_context=(settings.WEBHOOK_SSL_CERT, settings.WEBHOOK_SSL_PRIV), debug=settings.WEBHOOK_DEBUG) if len(sys.argv) > 1 else main()

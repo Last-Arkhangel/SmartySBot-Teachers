@@ -282,6 +282,26 @@ class MetricsManager:
         return statistic
 
     @classmethod
+    def get_hours_statistics(cls, day_delta=0):
+
+        statistic = {}
+        day = datetime.date.today() - datetime.timedelta(days=day_delta)
+
+        for i in range(24):
+            hour = '0' + str(i) if i < 10 else i
+            previous_hour_str = day.strftime('%Y-%m-%d {}:%M'.format(hour))
+
+            query = """SELECT COUNT(*)
+            FROM metrics
+            WHERE request_datetime > datetime('{}')
+            and request_datetime < datetime('{}', '+1 hours')""".format(previous_hour_str,
+                                                                        previous_hour_str)
+
+            statistic[previous_hour_str] = DBManager.execute_query(query)[0][0]
+
+        return statistic
+
+    @classmethod
     def get_users(cls):
 
         query = """SELECT * From users"""
@@ -522,7 +542,7 @@ def get_lesson_in_audience(audience_number=0, lesson_number=0):
         }
 
         # try:
-        r = requests.get('https://dekanat.zu.edu.ua/cgi-bin/timetable_export.cgi', params=data)
+        r = requests.get(settings.API_LINK, params=data)
 
         day_lessons = r.json().get('psrozklad_export', {}).get('roz_items', [])
 

@@ -1,0 +1,16 @@
+chardet
+certifi
+idna
+setuptools
+urllib3
+beautifulsoup4
+pytelegrambotapi
+six
+requests
+flask
+html5lib
+xmltodict
+GitPython
+gunicorn
+hashlib
+flask_sslify
