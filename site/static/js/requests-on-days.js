@@ -2,7 +2,7 @@ function update_request_days_chart(){
   
   var request = new XMLHttpRequest();
 
-  request.open('GET','last_days_statistics',true);
+  request.open('GET','/fl1/last_days_statistics',true);
   request.addEventListener('readystatechange', function() {
     
     if ((request.readyState==4) && (request.status==200)) {
@@ -18,7 +18,7 @@ function update_request_days_chart(){
           datasets: [{ 
               data: response.data.data,
               label: "Кількість запитів",
-              borderColor: "#D358F7",
+              borderColor: "#ff9f00",
               fill: true
             },
           ]
