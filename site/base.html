@@ -10,20 +10,23 @@
     <link rel="stylesheet" href="{{ url_for('static', filename = 'css/style.css') }}">
     <link rel="icon" href="{{ url_for('static', filename = 'icon.ico') }}" type="image/x-icon">
 
-    <title>{% block title %}SmartySTBot{% endblock %}</title>
+    <title>{% block title %}DACTE_ST_Bot{% endblock %}</title>
   </head>
   <body>
     <div class="container">
       <div class="header">
         <ul class="nav">
           <li class="nav-item">
-            <a class="nav-link brand-title" href="#">SmartySTBot/</a>
+            <a class="nav-link brand-title" href="/fl1/metrics">DACTE_ST_Bot</a>
           </li>
           <li class="nav-item">
             <a class="nav-link active" href="/fl1/metrics">Статистика</a>
           </li>
           <li class="nav-item">
             <a class="nav-link" href="/fl1/users">Користувачі</a>
+          </li>
+		  <li class="nav-item">
+            <a class="nav-link" href="/fl1/logout">Вихід</a>
           </li>
         </ul>
       </div>
